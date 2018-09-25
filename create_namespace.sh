@@ -8,7 +8,7 @@ if [[ $EUID != 0 ]]; then
 fi
 
 
-NS="ns1"
+NS="vpnsb"
 INTRFCE=$(ip addr show | awk '/inet.*brd/{print $NF; exit}')
 VETH="veth1"
 VPEER="vpeer1"
