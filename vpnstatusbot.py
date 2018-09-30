@@ -1,7 +1,18 @@
 import praw
 import re
 import requests
+import os
+import time
+import logging
+import json
 import subprocess
+
+if os.geteuid() != 0:
+    exit("Please run as root!")
+
+logging.basicConfig(level=logging.CRITICAL, format=' %(asctime)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
+logger.setLevel(logging.DEBUG)
 
 #Reddit authentication
 reddit = praw.Reddit(client_id='iLgrLcssI69Y6g',
@@ -10,36 +21,146 @@ reddit = praw.Reddit(client_id='iLgrLcssI69Y6g',
                      user_agent='ProtonStatusBot by /u/Rafficer',
                      username='ProtonStatusBot')
 
+# Check if the network namespace "vpnsb" exists, if not, create it.
+if not os.path.isfile("/var/run/netns/vpnsb"):
+    logger.debug("Creating network namespace...")
+    os.system("setup/create_namespace.sh")
+else:
+    logger.debug("Network namespace exists")
+
 #Regular Expressions to check if the message contains a servername
-vpnstatus_regex1 = re.compile(r'vpn ((\w\w)(-|#| )(\d{1,3}))', re.IGNORECASE) # For uk-03 format (UK = Group 2, 03 = Group 4)
-vpnstatus_regex2 = re.compile(r'vpn (((\w\w)(-|#| )\w\w)(-|#| )(\d{1,3}))', re.IGNORECASE) # For is-de-01 format (is-de = Group2, 01 = Group 6)
+vpnstatus_regex1 = re.compile(r'vpn ((\w\w)(-|#| ?)(\d{1,3}))( tcp| udp)?', re.IGNORECASE) # For uk-03 format (UK = Group 2, 03 = Group 4, tcp/udp = Group 5)
+vpnstatus_regex2 = re.compile(r'vpn (((\w\w)(-|#| ?)(\w\w))(-|#| ?)(\d{1,3}))( tcp| udp)?', re.IGNORECASE) # For is-de-01 format (is = group 3,de = Group5, 01 = Group 7, tcp/udp = Group 8)
 
 
 def main():
+    is_vpn_running(True)
+    logger.debug("Message Loop started")
     for message in reddit.inbox.stream(skip_existing=True):
-        print(message.body)
-        print("---------------")
+        if is_vpn_running():
+            is_vpn_running(True)
+        logger.debug("")
+        logger.debug('New Message')
+        logger.debug("Message Author: " + str(message.author))
+        logger.debug('Message Body:')
+        logger.debug(message.body)
+        logger.debug("---------------")
         servername = None
-        if vpnstatus_regex1.match(message.body):
-            servername = (vpnstatus_regex1.match(message.body).group(2) + "#" + vpnstatus_regex1.match(message.body).group(4)).upper()
-        elif vpnstatus_regex2.match(message.body):
-            servername = (vpnstatus_regex2.match(message.body).group(2) + "#" + vpnstatus_regex2.match(message.body).group(6)).upper()
-
+        protocol = None
+        if vpnstatus_regex1.search(message.body):
+            servername = (vpnstatus_regex1.search(message.body).group(2) + "#" + vpnstatus_regex1.search(message.body).group(4).lstrip("0")).upper()
+            if vpnstatus_regex1.search(message.body).group(5) != None:
+                protocol = vpnstatus_regex1.search(message.body).group(5).strip().lower()
+            else:
+                protocol = "udp"
+        elif vpnstatus_regex2.search(message.body):
+            servername = (vpnstatus_regex2.search(message.body).group(3) + "-" + vpnstatus_regex2.search(message.body).group(5) + "#" + vpnstatus_regex2.search(message.body).group(7).lstrip("0")).upper()
+            if vpnstatus_regex2.search(message.body).group(8) != None:
+                protocol = vpnstatus_regex2.search(message.body).group(8).strip().lower()
+            else:
+                protocol = "udp"
+        logger.debug(servername)
         ServerID = getVPNID(servername)
         if ServerID != None:
-            pass
-            #TODO connect to VPN etc
+            logger.debug("Starting connection")
+            download_ovpn_file(ServerID, protocol)
+            oldip = json.loads(subprocess.check_output('ip netns exec vpnsb wget -qO- "https://api.protonmail.ch/vpn/location"', stderr=subprocess.STDOUT, shell=True))['IP']
+            if connectvpn():
+                inet, dns, ip = errorchecks(oldip)
+                logger.debug("Replying...")
+                if inet:
+                    inetworking = "Success"
+                else:
+                    inetworking = "Failed"
+                if dns:
+                    dnsworking = "Success"
+                else:
+                    dnsworking = "Failed"
+                if ip:
+                    message.reply("**Tested Server:** " + servername + " via " + protocol.upper() + "\n\n**Connection successful.** \n\n**DNS Test:** " + dnsworking + "\n\n**Internet Test:** " + inetworking)
+                else:
+                    message.reply("The connection seemed to be successful, however the IP didn't change. Something went wrong")
+            else:
+                message.reply("Connection to " + servername + " via " + protocol.upper() + " failed")
+            is_vpn_running(True)
         else:
+            if servername != None:
+                message.reply("Server " + servername + " not found.")
+                logger.debug("Server not found")
+            else:
+                logger.debug('Message not useful')
             continue
         
-
-
-#TODO Search for the ID in for the server name
-
 def getVPNID(servername):
     serverlist = requests.get("https://api.protonmail.ch/vpn/logicals").json()
     for server in serverlist["LogicalServers"]:
         if servername == server["Name"]:
             return server["ID"]
 
-#TODO pass to connect script
+def download_ovpn_file(ServerID, protocol):
+    res = requests.get("https://api.protonmail.ch/vpn/config?Platform=Linux&LogicalID={}&Protocol={}".format(ServerID, protocol))
+    with open("config.ovpn", "wb") as f:
+        for chunk in res.iter_content(10000):
+            f.write(chunk)
+
+def is_vpn_running(disconnect=False):
+    if os.system('pgrep openvpn > /dev/null') == 0:
+        if disconnect:
+            os.system('kill $(pgrep openvpn)')
+            time.sleep(8)
+            if is_vpn_running():
+                os.system('kill -9 $(pgrep openvpn)')
+            else:
+                logger.debug("Disconnected after 1st try")
+                return False
+            time.sleep(5)
+            if is_vpn_running():
+                logger.debug("Disconnected after 2nd try")
+                return True
+            else:
+                logger.debug("Disconnecting failed")
+                return False
+        return True
+    else:
+        return False
+
+def connectvpn():
+    if os.path.isfile("ovpn.log"):
+        os.unlink("ovpn.log")
+
+    os.system('ip netns exec vpnsb ./connectvpn.sh')
+
+    max_tries = 3
+    counter = 0
+    while counter < max_tries:
+        time.sleep(5)
+        if os.path.isfile("ovpn.log"):
+            with open("ovpn.log") as f:
+                if "Initialization Sequence Completed" in f.read():
+                    logger.debug("Initialization Sequence Completed")
+                    return True
+        counter += 1
+        if counter >= max_tries:
+            return
+
+def errorchecks(oldip):
+    if os.system("ip netns exec vpnsb ping -c 1 1.1.1.1 > /dev/null") == 0:
+        inetcheck = True
+    else:
+        inetcheck = False
+
+    if os.system("ip netns exec vpnsb nslookup protonvpn.com 10.8.8.1 > /dev/null") == 0:
+        dnscheck = True
+    else:
+        dnscheck = False
+
+    newip = json.loads(subprocess.check_output('ip netns exec vpnsb wget -qO- "https://api.protonmail.ch/vpn/location"', stderr=subprocess.STDOUT, shell=True))['IP']
+    if newip == oldip:
+        ipcheck = False
+    else:
+        ipcheck = True
+
+    logger.debug("INET: " + str(inetcheck) + " DNS: " + str(dnscheck) + " Current IP: " + newip + " Previous IP: " + oldip)
+    return inetcheck, dnscheck, ipcheck
+
+main()

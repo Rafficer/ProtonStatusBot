@@ -1,2 +1,6 @@
 .vscode
 test.py
+ovpn.log
+test2.py
+.idea
+config.ovpn
