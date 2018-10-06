@@ -29,8 +29,8 @@ else:
     logger.debug("Network namespace exists")
 
 #Regular Expressions to check if the message contains a servername
-vpnstatus_regex1 = re.compile(r'vpn ((\w\w)(-|#| ?)(\d{1,3}))( tcp| udp)?', re.IGNORECASE) # For uk-03 format (UK = Group 2, 03 = Group 4, tcp/udp = Group 5)
-vpnstatus_regex2 = re.compile(r'vpn (((\w\w)(-|#| ?)(\w\w))(-|#| ?)(\d{1,3}))( tcp| udp)?', re.IGNORECASE) # For is-de-01 format (is = group 3,de = Group5, 01 = Group 7, tcp/udp = Group 8)
+re_vpncheck_short = re.compile(r'vpn ((\w\w)(-|#| ?)(\d{1,3}))( tcp| udp)?', re.IGNORECASE) # For uk-03 format (UK = Group 2, 03 = Group 4, tcp/udp = Group 5)
+re_vpncheck_long = re.compile(r'vpn (((\w\w)(-|#| ?)(\w\w))(-|#| ?)(\d{1,3}))( tcp| udp)?', re.IGNORECASE) # For is-de-01 format (is = group 3,de = Group5, 01 = Group 7, tcp/udp = Group 8)
 
 
 def main():
@@ -47,16 +47,16 @@ def main():
         logger.debug("---------------")
         servername = None
         protocol = None
-        if vpnstatus_regex1.search(message.body):
-            servername = (vpnstatus_regex1.search(message.body).group(2) + "#" + vpnstatus_regex1.search(message.body).group(4).lstrip("0")).upper()
-            if vpnstatus_regex1.search(message.body).group(5) != None:
-                protocol = vpnstatus_regex1.search(message.body).group(5).strip().lower()
+        if re_vpncheck_short.search(message.body):
+            servername = (re_vpncheck_short.search(message.body).group(2) + "#" + re_vpncheck_short.search(message.body).group(4).lstrip("0")).upper()
+            if re_vpncheck_short.search(message.body).group(5) != None:
+                protocol = re_vpncheck_short.search(message.body).group(5).strip().lower()
             else:
                 protocol = "udp"
-        elif vpnstatus_regex2.search(message.body):
-            servername = (vpnstatus_regex2.search(message.body).group(3) + "-" + vpnstatus_regex2.search(message.body).group(5) + "#" + vpnstatus_regex2.search(message.body).group(7).lstrip("0")).upper()
-            if vpnstatus_regex2.search(message.body).group(8) != None:
-                protocol = vpnstatus_regex2.search(message.body).group(8).strip().lower()
+        elif re_vpncheck_long.search(message.body):
+            servername = (re_vpncheck_long.search(message.body).group(3) + "-" + re_vpncheck_long.search(message.body).group(5) + "#" + re_vpncheck_long.search(message.body).group(7).lstrip("0")).upper()
+            if re_vpncheck_long.search(message.body).group(8) != None:
+                protocol = re_vpncheck_long.search(message.body).group(8).strip().lower()
             else:
                 protocol = "udp"
         logger.debug(servername)
@@ -69,23 +69,23 @@ def main():
                 inet, dns, ip = errorchecks(oldip)
                 logger.debug("Replying...")
                 if inet:
-                    inetworking = "Success"
+                    inetworking = "✔"
                 else:
-                    inetworking = "Failed"
+                    inetworking = "❌"
                 if dns:
-                    dnsworking = "Success"
+                    dnsworking = "✔"
                 else:
-                    dnsworking = "Failed"
+                    dnsworking = "❌"
                 if ip:
-                    message.reply("**Tested Server:** " + servername + " via " + protocol.upper() + "\n\n**Connection successful.** \n\n**DNS Test:** " + dnsworking + "\n\n**Internet Test:** " + inetworking)
+                    AppendMessageFooter(message, ("**Tested Server:** " + servername + " via " + protocol.upper() + "\n\n**Connection successful.** \n\n**DNS Test:** " + dnsworking + "\n\n**Internet Test:** " + inetworking))
                 else:
-                    message.reply("The connection seemed to be successful, however the IP didn't change. Something went wrong")
+                    AppendMessageFooter(message, "The connection seemed to be successful, however the IP didn't change. Something went wrong")
             else:
-                message.reply("Connection to " + servername + " via " + protocol.upper() + " failed")
+                AppendMessageFooter(message, ("Connection to " + servername + " via " + protocol.upper() + " failed"))
             is_vpn_running(True)
         else:
             if servername != None:
-                message.reply("Server " + servername + " not found.")
+                AppendMessageFooter(message, ("Server " + servername + " not found."))
                 logger.debug("Server not found")
             else:
                 logger.debug('Message not useful')
@@ -102,6 +102,7 @@ def download_ovpn_file(ServerID, protocol):
     with open("config.ovpn", "wb") as f:
         for chunk in res.iter_content(10000):
             f.write(chunk)
+    logger.debug("OpenVPN Config File downloaded")
 
 def is_vpn_running(disconnect=False):
     if os.system('pgrep openvpn > /dev/null') == 0:
@@ -130,10 +131,10 @@ def connectvpn():
 
     os.system('ip netns exec vpnsb ./connectvpn.sh')
 
-    max_tries = 3
+    max_tries = 30
     counter = 0
     while counter < max_tries:
-        time.sleep(5)
+        time.sleep(1)
         if os.path.isfile("ovpn.log"):
             with open("ovpn.log") as f:
                 if "Initialization Sequence Completed" in f.read():
@@ -141,6 +142,7 @@ def connectvpn():
                     return True
         counter += 1
         if counter >= max_tries:
+            logger.debug("Initialization Sequence not completed after {} tries".format(max_tries))
             return
 
 def errorchecks(oldip):
@@ -163,4 +165,10 @@ def errorchecks(oldip):
     logger.debug("INET: " + str(inetcheck) + " DNS: " + str(dnscheck) + " Current IP: " + newip + " Previous IP: " + oldip)
     return inetcheck, dnscheck, ipcheck
 
+"""Adds Footer to any message an replies"""
+def AppendMessageFooter(msg, messagebody):
+    footer = "\n\n_____________________\n\n^^I ^^am ^^a ^^Bot. ^^| [^^How ^^to ^^use](https://example.com) ^^| ^^Made ^^with ^^🖤 ^^by ^^/u/Rafficer"
+    full_message = messagebody + footer
+    msg.reply(full_message)
+    logger.debug("Replied!")
 main()
