@@ -1,4 +1,4 @@
-import praw
+import praw, prawcore
 import re
 import requests
 import os
@@ -39,19 +39,30 @@ def main():
     logger.debug("Message Loop started")
     for message in reddit.inbox.stream(skip_existing=True):
         logger.debug('New Message')
+        if message.was_comment:
+            logger.debug("Message Link: https://reddit.com{}".format(message.context))
         logger.debug("Message Author: " + str(message.author))
         logger.debug('Message Body:')
         logger.debug(message.body)
         try:
             res = handle_message(message)
         except requests.exceptions.ConnectionError as err:
-            logger.debug("Requests Connection Error. Message skipped.")
-            logger.debug(err)
-            continue
+            logger.critical("First requests.exceptions.ConnectionError")
+            logger.critical(err)
+            connectivity_check()
+            try:
+                logger.debug("Trying to handle the message again.")
+                res = handle_message(message)
+            except requests.exceptions.ConnectionError as err:
+                logger.critical("Second requests.exceptions.ConnectionError")
+                logger.critical(err)
+                continue
+
+
         if res == None:
             logger.debug("Message not useful")
         else:
-            AppendMessageFooter(message, res)
+            append_message_footer(message, res)
 
         logger.debug("Message completed!")
         logger.debug("#################")
@@ -109,7 +120,12 @@ def testVPN(servername, ServerID, protocol="udp", rand=False):
     logger.debug("Servername: {}".format(servername))
     logger.debug("Starting connection")
     download_ovpn_file(ServerID, protocol)
-    oldip = json.loads(subprocess.check_output('ip netns exec vpnsb wget -qO- "https://api.protonmail.ch/vpn/location"',stderr=subprocess.STDOUT, shell=True))['IP']
+    try:
+        oldip = json.loads(subprocess.check_output('ip netns exec vpnsb wget -T 20 -qO- "https://api.protonmail.ch/vpn/location"',stderr=subprocess.STDOUT, shell=True))['IP']
+    except subprocess.CalledProcessError as err:
+        logger.critical("Getting oldIP failed")
+        logger.critical(err)
+        oldip = "OldIPFail"
     if connectvpn():
         inet, dns, ip = errorchecks(oldip)
         if inet:
@@ -201,9 +217,13 @@ def errorchecks(oldip):
         dnscheck = True
     else:
         dnscheck = False
-
-    newip = json.loads(subprocess.check_output('ip netns exec vpnsb wget -qO- "https://api.protonmail.ch/vpn/location"',
+    try:
+        newip = json.loads(subprocess.check_output('ip netns exec vpnsb wget -T 20 -qO- "https://api.protonmail.ch/vpn/location"',
                                                stderr=subprocess.STDOUT, shell=True))['IP']
+    except subprocess.CalledProcessError as err:
+        logger.critical("Getting NewIP failed")
+        logger.critical(err)
+        newip = "NewIPFail"
     if newip == oldip:
         ipcheck = False
     else:
@@ -214,13 +234,56 @@ def errorchecks(oldip):
     return inetcheck, dnscheck, ipcheck
 
 
-"""Adds Footer to any message an replies"""
-def AppendMessageFooter(msg, messagebody):
+def append_message_footer(msg, messagebody):
+    """Adds Footer to any message an replies"""
     footer = "\n\n_____________________\n\n^^I ^^am ^^a ^^Bot. ^^| [^^How ^^to ^^use](https://example.com) ^^| ^^Made ^^with ^^🖤 ^^by ^^/u/Rafficer"
     full_message = messagebody + footer
     logger.debug("Replying...")
-    msg.reply(full_message)
+    try:
+        msg.reply(full_message)
+    except prawcore.exceptions.RequestException:
+        logger.debug("Replying failed. Checking for connectivity and trying again.")
+        connectivity_check()
+        msg.reply(full_message)
     logger.debug("Replied!")
 
 
-main()
+def is_network_down():
+    try:
+        requests.get("https://wikipedia.org")
+        return False
+    except requests.exceptions.ConnectionError:
+        return True
+
+
+def connectivity_check():
+    internet_down = True
+    logger.debug("Connectivity Check requested")
+    logged_already = False
+    while internet_down:
+        if is_network_down():
+            if logged_already == False:
+                logger.debug("Connection is down. Waiting for it to come back up")
+                logged_already = True
+            time.sleep(3)
+        else:
+            internet_down = False
+    logger.debug("Connection is up")
+
+
+while True:
+    try:
+        main()
+    except prawcore.exceptions.RequestException as err:
+        logger.critical("prawcore.exceptions.RequestException:")
+        logger.critical(err)
+        logger.debug("Network seems to be down.")
+        connectivity_check()
+    except KeyboardInterrupt:
+        logger.debug("KeyboardInterrupt detected, Program will shut down")
+        exit()
+
+    #except Exception as err:
+     #   logger.critical(err)
+      #  logger.critical("Program will shut down.")
+       # exit("Failure.")
