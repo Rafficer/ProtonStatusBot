@@ -6,6 +6,7 @@ import time
 import logging
 import json
 import subprocess
+import random
 
 if os.geteuid() != 0:
     exit("Please run as root!")
@@ -14,7 +15,7 @@ logging.basicConfig(level=logging.CRITICAL, format=' %(asctime)s - %(levelname)s
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)
 
-#Reddit authentication
+# Reddit authentication
 reddit = praw.Reddit(client_id='iLgrLcssI69Y6g',
                      client_secret='RmkVJrA97Os4XJ2XrLHBKq0Rye8',
                      password='BeP339ZJxEZYQ4PL',
@@ -28,81 +29,124 @@ if not os.path.isfile("/var/run/netns/vpnsb"):
 else:
     logger.debug("Network namespace exists")
 
-#Regular Expressions to check if the message contains a servername
-re_vpncheck_short = re.compile(r'vpn ((\w\w)(-|#| ?)(\d{1,3}))( tcp| udp)?', re.IGNORECASE) # For uk-03 format (UK = Group 2, 03 = Group 4, tcp/udp = Group 5)
-re_vpncheck_long = re.compile(r'vpn (((\w\w)(-|#| ?)(\w\w))(-|#| ?)(\d{1,3}))( tcp| udp)?', re.IGNORECASE) # For is-de-01 format (is = group 3,de = Group5, 01 = Group 7, tcp/udp = Group 8)
-
+# Regular Expressions to check if the message contains a servername
+re_vpncheck_short = re.compile(r'!vpn ((\w\w)(-|#| ?)(\d{1,3}))( tcp| udp)?', re.IGNORECASE)  # For uk-03 format (UK = Group 2, 03 = Group 4, tcp/udp = Group 5)
+re_vpncheck_long = re.compile(r'!vpn (((\w\w)(-|#| ?)(\w\w))(-|#| ?)(\d{1,3}))( tcp| udp)?', re.IGNORECASE)  # For is-de-01 format (is = group 3,de = Group5, 01 = Group 7, tcp/udp = Group 8)
+re_vpncheck_random = re.compile(r'!vpn random', re.IGNORECASE)
 
 def main():
     is_vpn_running(True)
     logger.debug("Message Loop started")
     for message in reddit.inbox.stream(skip_existing=True):
-        if is_vpn_running():
-            is_vpn_running(True)
-        logger.debug("")
         logger.debug('New Message')
         logger.debug("Message Author: " + str(message.author))
         logger.debug('Message Body:')
         logger.debug(message.body)
-        logger.debug("---------------")
+        try:
+            res = handle_message(message)
+        except requests.exceptions.ConnectionError as err:
+            logger.debug("Requests Connection Error. Message skipped.")
+            logger.debug(err)
+            continue
+        if res == None:
+            logger.debug("Message not useful")
+        else:
+            AppendMessageFooter(message, res)
+
+        logger.debug("Message completed!")
+        logger.debug("#################")
+
+
+def handle_message(message):
+    """Handles every message and creates the reply"""
+    if re_vpncheck_short.search(message.body) or re_vpncheck_long.search(message.body):
+        """Checks for VPN Connectivity"""
         servername = None
         protocol = None
+
         if re_vpncheck_short.search(message.body):
-            servername = (re_vpncheck_short.search(message.body).group(2) + "#" + re_vpncheck_short.search(message.body).group(4).lstrip("0")).upper()
+            servername = (re_vpncheck_short.search(message.body).group(2) + "#" + re_vpncheck_short.search(
+                message.body).group(4).lstrip("0")).upper()
             if re_vpncheck_short.search(message.body).group(5) != None:
                 protocol = re_vpncheck_short.search(message.body).group(5).strip().lower()
             else:
                 protocol = "udp"
         elif re_vpncheck_long.search(message.body):
-            servername = (re_vpncheck_long.search(message.body).group(3) + "-" + re_vpncheck_long.search(message.body).group(5) + "#" + re_vpncheck_long.search(message.body).group(7).lstrip("0")).upper()
+            servername = (re_vpncheck_long.search(message.body).group(3) + "-" + re_vpncheck_long.search(
+                message.body).group(5) + "#" + re_vpncheck_long.search(message.body).group(7).lstrip("0")).upper()
             if re_vpncheck_long.search(message.body).group(8) != None:
                 protocol = re_vpncheck_long.search(message.body).group(8).strip().lower()
             else:
                 protocol = "udp"
-        logger.debug(servername)
         ServerID = getVPNID(servername)
+
         if ServerID != None:
-            logger.debug("Starting connection")
-            download_ovpn_file(ServerID, protocol)
-            oldip = json.loads(subprocess.check_output('ip netns exec vpnsb wget -qO- "https://api.protonmail.ch/vpn/location"', stderr=subprocess.STDOUT, shell=True))['IP']
-            if connectvpn():
-                inet, dns, ip = errorchecks(oldip)
-                logger.debug("Replying...")
-                if inet:
-                    inetworking = "✔"
-                else:
-                    inetworking = "❌"
-                if dns:
-                    dnsworking = "✔"
-                else:
-                    dnsworking = "❌"
-                if ip:
-                    AppendMessageFooter(message, ("**Tested Server:** " + servername + " via " + protocol.upper() + "\n\n**Connection successful.** \n\n**DNS Test:** " + dnsworking + "\n\n**Internet Test:** " + inetworking))
-                else:
-                    AppendMessageFooter(message, "The connection seemed to be successful, however the IP didn't change. Something went wrong")
-            else:
-                AppendMessageFooter(message, ("Connection to " + servername + " via " + protocol.upper() + " failed"))
-            is_vpn_running(True)
+            res = testVPN(servername, ServerID, protocol)
+            return res
         else:
             if servername != None:
-                AppendMessageFooter(message, ("Server " + servername + " not found."))
-                logger.debug("Server not found")
+                logger.debug("Server {} not found".format(servername))
+                return "Server {} not found".format(servername)
             else:
-                logger.debug('Message not useful')
-            continue
-        
+                return
+
+    if re_vpncheck_random.search(message.body):
+        return testVPN("FillerServername", "FillerServerID", rand=True)
+
+
+def testVPN(servername, ServerID, protocol="udp", rand=False):
+    logger.debug("VPN Test requested")
+    if is_vpn_running():
+        is_vpn_running(True)
+
+    if rand == True:
+        serverlist = requests.get("https://api.protonmail.ch/vpn/logicals").json()
+        servercount = len(serverlist["LogicalServers"]) - 1
+        random_number = random.randint(0, servercount)
+        servername = serverlist["LogicalServers"][random_number]["Name"]
+        ServerID = getVPNID(servername)
+        protocol = random.choice(["udp", "tcp"])
+    logger.debug("Servername: {}".format(servername))
+    logger.debug("Starting connection")
+    download_ovpn_file(ServerID, protocol)
+    oldip = json.loads(subprocess.check_output('ip netns exec vpnsb wget -qO- "https://api.protonmail.ch/vpn/location"',stderr=subprocess.STDOUT, shell=True))['IP']
+    if connectvpn():
+        inet, dns, ip = errorchecks(oldip)
+        if inet:
+            inetworking = "✔"
+        else:
+            inetworking = "❌"
+        if dns:
+            dnsworking = "✔"
+        else:
+            dnsworking = "❌"
+        if ip:
+            is_vpn_running(True)
+            return "**Tested Server:** {} via {}\n\n**Connection successful.** \n\n**DNS Test:** {}\n\n**Internet Test:** {}".format(servername, protocol.upper(), dnsworking, inetworking)
+        else:
+            is_vpn_running(True)
+            return "The connection to {} seemed to be successful, however the IP didn't change. Something went wrong".format(servername)
+    else:
+        is_vpn_running(True)
+        return "Connection to {} via {} failed".format(servername, protocol.upper() )
+    is_vpn_running(True)
+
+
 def getVPNID(servername):
     serverlist = requests.get("https://api.protonmail.ch/vpn/logicals").json()
     for server in serverlist["LogicalServers"]:
         if servername == server["Name"]:
             return server["ID"]
 
+
 def download_ovpn_file(ServerID, protocol):
-    res = requests.get("https://api.protonmail.ch/vpn/config?Platform=Linux&LogicalID={}&Protocol={}".format(ServerID, protocol))
+    res = requests.get(
+        "https://api.protonmail.ch/vpn/config?Platform=Linux&LogicalID={}&Protocol={}".format(ServerID, protocol))
     with open("config.ovpn", "wb") as f:
         for chunk in res.iter_content(10000):
             f.write(chunk)
     logger.debug("OpenVPN Config File downloaded")
+
 
 def is_vpn_running(disconnect=False):
     if os.system('pgrep openvpn > /dev/null') == 0:
@@ -125,6 +169,7 @@ def is_vpn_running(disconnect=False):
     else:
         return False
 
+
 def connectvpn():
     if os.path.isfile("ovpn.log"):
         os.unlink("ovpn.log")
@@ -145,8 +190,9 @@ def connectvpn():
             logger.debug("Initialization Sequence not completed after {} tries".format(max_tries))
             return
 
+
 def errorchecks(oldip):
-    if os.system("ip netns exec vpnsb ping -c 1 1.1.1.1 > /dev/null") == 0:
+    if os.system("ip netns exec vpnsb ping -c 1 1.0.0.1 > /dev/null") == 0:
         inetcheck = True
     else:
         inetcheck = False
@@ -156,19 +202,25 @@ def errorchecks(oldip):
     else:
         dnscheck = False
 
-    newip = json.loads(subprocess.check_output('ip netns exec vpnsb wget -qO- "https://api.protonmail.ch/vpn/location"', stderr=subprocess.STDOUT, shell=True))['IP']
+    newip = json.loads(subprocess.check_output('ip netns exec vpnsb wget -qO- "https://api.protonmail.ch/vpn/location"',
+                                               stderr=subprocess.STDOUT, shell=True))['IP']
     if newip == oldip:
         ipcheck = False
     else:
         ipcheck = True
 
-    logger.debug("INET: " + str(inetcheck) + " DNS: " + str(dnscheck) + " Current IP: " + newip + " Previous IP: " + oldip)
+    logger.debug(
+        "INET: " + str(inetcheck) + " DNS: " + str(dnscheck) + " Current IP: " + newip + " Previous IP: " + oldip)
     return inetcheck, dnscheck, ipcheck
+
 
 """Adds Footer to any message an replies"""
 def AppendMessageFooter(msg, messagebody):
     footer = "\n\n_____________________\n\n^^I ^^am ^^a ^^Bot. ^^| [^^How ^^to ^^use](https://example.com) ^^| ^^Made ^^with ^^🖤 ^^by ^^/u/Rafficer"
     full_message = messagebody + footer
+    logger.debug("Replying...")
     msg.reply(full_message)
     logger.debug("Replied!")
+
+
 main()
