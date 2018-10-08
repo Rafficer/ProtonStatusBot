@@ -238,7 +238,7 @@ def error_checks(oldip):
 
 def append_message_footer(msg, messagebody):
     """Adds Footer to any message an replies"""
-    footer = "\n\n_____________________\n\n^^I ^^am ^^a ^^Bot. ^^| [^^How ^^to ^^use](https://github.com/Rafficer/ProtonStatusBot/tree/master#how-to-use) ^^| ^^Made ^^with ^^🖤 ^^by ^^/u/Rafficer"
+    footer = "\n\n_____________________\n\n^^I ^^am ^^a ^^Bot. ^^| [^^How ^^to ^^use](https://github.com/Rafficer/ProtonStatusBot/tree/master#how-to-use) ^^| ^^Made ^^with ^^🖤 ^^by ^^/u/Rafficer ^^| ^^[Source](https://github.com/rafficer/ProtonStatusBot) ^^| [^^Report ^^a  ^^Bug](https://github.com/Rafficer/ProtonStatusBot/issues)"
     full_message = messagebody + footer
     logger.debug("Replying...")
     try:
