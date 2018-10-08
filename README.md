@@ -58,6 +58,12 @@ The program needs to run as root to be allowed to create network namespaces and 
 
 `sudo python3 protonstatusbot.py`
 
+## Why?
+
+Mainly for me to learn Python. Fairly new to it but always open for improvements.
+
+And because I thought it might be a useful tool. Maybe.
+
 ## License
 
 This project is licensed under the MIT License - see the [LICENSE.md](LICENSE.md) file for details
