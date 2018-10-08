@@ -4,3 +4,4 @@ ovpn.log
 test2.py
 .idea
 config.ovpn
+__pycache__
