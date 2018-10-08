@@ -7,6 +7,7 @@ import logging
 import json
 import subprocess
 import random
+from reddit_authentication import client_id, client_secret, password, username
 
 if os.geteuid() != 0:
     exit("Please run as root!")
@@ -16,11 +17,11 @@ logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)
 
 # Reddit authentication
-reddit = praw.Reddit(client_id='iLgrLcssI69Y6g',
-                     client_secret='RmkVJrA97Os4XJ2XrLHBKq0Rye8',
-                     password='BeP339ZJxEZYQ4PL',
+reddit = praw.Reddit(client_id=client_id,
+                     client_secret=client_secret,
+                     password=password,
                      user_agent='ProtonStatusBot by /u/Rafficer',
-                     username='ProtonStatusBot')
+                     username=username)
 
 # Check if the network namespace "vpnsb" exists, if not, create it.
 if not os.path.isfile("/var/run/netns/vpnsb"):
@@ -33,6 +34,7 @@ else:
 re_vpncheck_short = re.compile(r'!vpn ((\w\w)(-|#| ?)(\d{1,3}))( tcp| udp)?', re.IGNORECASE)  # For uk-03 format (UK = Group 2, 03 = Group 4, tcp/udp = Group 5)
 re_vpncheck_long = re.compile(r'!vpn (((\w\w)(-|#| ?)(\w\w))(-|#| ?)(\d{1,3}))( tcp| udp)?', re.IGNORECASE)  # For is-de-01 format (is = group 3,de = Group5, 01 = Group 7, tcp/udp = Group 8)
 re_vpncheck_random = re.compile(r'!vpn random', re.IGNORECASE)
+
 
 def main():
     is_vpn_running(True)
@@ -89,10 +91,10 @@ def handle_message(message):
                 protocol = re_vpncheck_long.search(message.body).group(8).strip().lower()
             else:
                 protocol = "udp"
-        ServerID = getVPNID(servername)
+        ServerID = get_vpnserver_id(servername)
 
         if ServerID != None:
-            res = testVPN(servername, ServerID, protocol)
+            res = test_vpn(servername, ServerID, protocol)
             return res
         else:
             if servername != None:
@@ -102,10 +104,10 @@ def handle_message(message):
                 return
 
     if re_vpncheck_random.search(message.body):
-        return testVPN("FillerServername", "FillerServerID", rand=True)
+        return test_vpn("FillerServername", "FillerServerID", rand=True)
 
 
-def testVPN(servername, ServerID, protocol="udp", rand=False):
+def test_vpn(servername, ServerID, protocol="udp", rand=False):
     logger.debug("VPN Test requested")
     if is_vpn_running():
         is_vpn_running(True)
@@ -115,7 +117,7 @@ def testVPN(servername, ServerID, protocol="udp", rand=False):
         servercount = len(serverlist["LogicalServers"]) - 1
         random_number = random.randint(0, servercount)
         servername = serverlist["LogicalServers"][random_number]["Name"]
-        ServerID = getVPNID(servername)
+        ServerID = get_vpnserver_id(servername)
         protocol = random.choice(["udp", "tcp"])
     logger.debug("Servername: {}".format(servername))
     logger.debug("Starting connection")
@@ -126,8 +128,8 @@ def testVPN(servername, ServerID, protocol="udp", rand=False):
         logger.critical("Getting oldIP failed")
         logger.critical(err)
         oldip = "OldIPFail"
-    if connectvpn():
-        inet, dns, ip = errorchecks(oldip)
+    if connect_vpn():
+        inet, dns, ip = error_checks(oldip)
         if inet:
             inetworking = "✔"
         else:
@@ -148,7 +150,7 @@ def testVPN(servername, ServerID, protocol="udp", rand=False):
     is_vpn_running(True)
 
 
-def getVPNID(servername):
+def get_vpnserver_id(servername):
     serverlist = requests.get("https://api.protonmail.ch/vpn/logicals").json()
     for server in serverlist["LogicalServers"]:
         if servername == server["Name"]:
@@ -186,7 +188,7 @@ def is_vpn_running(disconnect=False):
         return False
 
 
-def connectvpn():
+def connect_vpn():
     if os.path.isfile("ovpn.log"):
         os.unlink("ovpn.log")
 
@@ -207,7 +209,7 @@ def connectvpn():
             return
 
 
-def errorchecks(oldip):
+def error_checks(oldip):
     if os.system("ip netns exec vpnsb ping -c 1 1.0.0.1 > /dev/null") == 0:
         inetcheck = True
     else:
@@ -283,7 +285,8 @@ while True:
         logger.debug("KeyboardInterrupt detected, Program will shut down")
         exit()
 
-    #except Exception as err:
-     #   logger.critical(err)
-      #  logger.critical("Program will shut down.")
-       # exit("Failure.")
+    except Exception as err:
+        logger.critical(err.__name__)
+        logger.critical(err)
+        logger.critical("Program will shut down.")
+        exit("Failure.")
