@@ -286,7 +286,7 @@ while True:
         exit()
 
     except Exception as err:
-        logger.critical(err.__name__)
+        #logger.critical(err.__name__)
         logger.critical(err)
         logger.critical("Program will shut down.")
         exit("Failure.")
