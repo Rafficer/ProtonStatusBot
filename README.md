@@ -28,9 +28,9 @@ These instructions will get you a copy of the project up and running on your loc
 
 ### Prerequisites
 
-Only tested on Debian 9 and Ubuntu 18.04.
+Only tested on Ubuntu 18.04.
 
-* Python 3.6+
+* Python 3.6.5+
 * wget
 * ip
 * openvpn

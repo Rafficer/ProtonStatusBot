@@ -7,12 +7,21 @@ import logging
 import json
 import subprocess
 import random
+from datetime import datetime
 from reddit_authentication import client_id, client_secret, password, username
 
 if os.geteuid() != 0:
     exit("Please run as root!")
 
-logging.basicConfig(level=logging.CRITICAL, format=' %(asctime)s - %(levelname)s - %(message)s')
+if not os.path.isdir("logs"):
+    os.mkdir("logs")
+
+date = datetime.now()
+
+logging.basicConfig(level=logging.CRITICAL, format=' %(asctime)s - %(levelname)s - %(message)s', handlers=[
+    logging.FileHandler("{}/{}.log".format("logs", "{}-{}-{}-protonstatusbot".format(date.year, date.month, date.day))),
+    logging.StreamHandler()
+])
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)
 
