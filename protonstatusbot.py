@@ -41,7 +41,7 @@ else:
 
 # Regular Expressions to check if the message contains a servername
 re_vpncheck_short = re.compile(r'!vpn ((\w\w)(-|#| ?)(\d{1,3}))( tcp| udp)?', re.IGNORECASE)  # For uk-03 format (UK = Group 2, 03 = Group 4, tcp/udp = Group 5)
-re_vpncheck_long = re.compile(r'!vpn (((\w\w)(-|#| ?)(\w\w))(-|#| ?)(\d{1,3}))( tcp| udp)?', re.IGNORECASE)  # For is-de-01 format (is = group 3,de = Group5, 01 = Group 7, tcp/udp = Group 8)
+re_vpncheck_long = re.compile(r'!vpn (((\w\w)(-|#| ?)(\w\w|free))(-|#| ?)(\d{1,3}))( tcp| udp)?', re.IGNORECASE)  # For is-de-01 format (is = group 3,de = Group5, 01 = Group 7, tcp/udp = Group 8)
 re_vpncheck_random = re.compile(r'!vpn random', re.IGNORECASE)
 
 
