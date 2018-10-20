@@ -9,6 +9,13 @@ import subprocess
 import random
 from datetime import datetime
 from reddit_authentication import client_id, client_secret, password, username
+from protonmail_credentials import pm_username, pm_password
+
+import selenium
+from selenium import webdriver
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
+from selenium.webdriver.common.by import By
 
 if os.geteuid() != 0:
     exit("Please run as root!")
@@ -43,6 +50,7 @@ else:
 re_vpncheck_short = re.compile(r'!vpn ((\w\w)(-|#| ?)(\d{1,3}))( tcp| udp)?', re.IGNORECASE)  # For uk-03 format (UK = Group 2, 03 = Group 4, tcp/udp = Group 5)
 re_vpncheck_long = re.compile(r'!vpn (((\w\w)(-|#| ?)(\w\w|free))(-|#| ?)(\d{1,3}))( tcp| udp)?', re.IGNORECASE)  # For is-de-01 format (is = group 3,de = Group5, 01 = Group 7, tcp/udp = Group 8)
 re_vpncheck_random = re.compile(r'!vpn random', re.IGNORECASE)
+re_mailcheck_login = re.compile(r'!pm login', re.IGNORECASE)
 
 
 def main():
@@ -114,6 +122,41 @@ def handle_message(message):
 
     if re_vpncheck_random.search(message.body):
         return test_vpn("FillerServername", "FillerServerID", rand=True)
+    if re_mailcheck_login.search(message.body):
+        return test_pm_login()
+
+def test_pm_login():
+    logger.debug("Login Test requested")
+    chrome_options = webdriver.ChromeOptions()
+    chrome_options.add_argument("--window-size=1200,900")
+    chrome_options.add_argument("--no-sandbox")
+    chrome_options.add_argument("--headless")
+
+    browser = webdriver.Chrome(executable_path='./setup/chromedriver', chrome_options=chrome_options)
+    browser.get("chrome://about")
+    start_load = time.time()
+    browser.get("https://mail.protonmail.com")
+    start_login = time.time()
+    try:
+        browser.find_element_by_id("username").send_keys(pm_username)
+        browser.find_element_by_id("password").send_keys(pm_password)
+        browser.find_element_by_id("login_btn").click()
+    except selenium.common.exceptions.NoSuchElementException:
+        end_load = time.time()
+        browser.close()
+        logger.debug(f"https://mail.protonmail.com failed to load after {end_load-start_load:.2f}.")
+        return f"https://mail.protonmail.com failed to load after {end_load-start_load:.2f}."
+    try:
+        WebDriverWait(browser, 60).until(EC.presence_of_element_located((By.CLASS_NAME, "compose")))
+        end_login = time.time()
+        browser.close()
+        logger.debug(f"Login to WebApp successful after {end_login-start_login:.2f}s.")
+        return f"Login to WebApp successful after {end_login-start_login:.2f}s."
+    except selenium.common.exceptions.TimeoutException:
+        browser.close()
+        logger.debug("Login to WebApp timed out after 60s.")
+        return "Login to WebApp timed out after 60s."
+
 
 
 def test_vpn(servername, ServerID, protocol="udp", rand=False):
