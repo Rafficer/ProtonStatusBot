@@ -22,6 +22,14 @@ Adding either TCP or UDP after the Server name will specify the Protocol that's 
 
 `/u/ProtonStatusBot !vpn random udp`
 
+### Checking ProtonMail Login Status
+
+Checking whether or not the ProtonMail login works can be achieved with the command `!pm login`.
+
+#### Example:
+
+`/u/ProtonStatusBot !pm login`
+
 ## Getting Started
 
 These instructions will get you a copy of the project up and running on your local environment for development and testing purposes.
@@ -34,11 +42,13 @@ Only tested on Ubuntu 18.04.
 * wget
 * ip
 * openvpn
+* chromium-browser
 
 Python Packages:
 
 * requests
 * praw
+* selenium
 
 `pip3 install -r requirements.txt`
 
